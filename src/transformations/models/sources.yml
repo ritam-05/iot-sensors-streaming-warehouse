@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: iotstream
+    database: iotstream_db
+    schema: main
+    tables:
+      - name: bronze_telemetry
+        description: "Raw IoT telemetry events ingested from SQS"
