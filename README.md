@@ -35,6 +35,25 @@ This project demonstrates a complete telemetry path: simulated sensor readings a
 
 ## Architecture
 
+<p align="center">
+  <img src="docs/images/arch-diagram.png" alt="IoT Streaming Data Warehouse AWS architecture" width="100%" />
+</p>
+
+```mermaid
+flowchart TD
+    EB[EventBridge<br/>rate: 1 minute] --> SIM[Simulator Lambda<br/>Python 3.12]
+    SIM --> TQ[Telemetry SQS Queue]
+    TQ --> ETL[ETL Processor Lambda<br/>Anomaly enrichment]
+    TQ -. failed after 3 receives .-> TDLQ[Telemetry DLQ]
+    ETL --> DDB[(DynamoDB<br/>latest device state)]
+    ETL --> WQ[Warehouse SQS Queue]
+    WQ -. failed after 3 receives .-> WDLQ[Warehouse DLQ]
+    WQ --> ING[Python warehouse ingestion]
+    ING --> BRONZE[(MotherDuck<br/>Bronze telemetry)]
+    BRONZE --> SILVER[dbt Silver<br/>clean and deduplicate]
+    SILVER --> GOLD[dbt Gold<br/>hourly machine metrics]
+```
+
 ```text
 EventBridge schedule (every minute)
             |
