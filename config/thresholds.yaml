@@ -1,0 +1,15 @@
+temperature:
+  warning: 75.0
+  critical: 85.0
+
+vibration:
+  warning: 7.0
+  critical: 10.0
+
+pressure:
+  warning: 110.0
+  critical: 120.0
+
+battery:
+  low: 20
+  critical: 15

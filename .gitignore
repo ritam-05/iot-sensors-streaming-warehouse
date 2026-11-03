@@ -1,0 +1,51 @@
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python bytecode and tooling
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# dbt build artifacts
+warehouse/target/
+warehouse/dbt_packages/
+warehouse/logs/
+
+# Infrastructure state and local overrides
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfvars
+terraform.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Local data, logs, and temporary files
+data/
+logs/
+tmp/
+*.log
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

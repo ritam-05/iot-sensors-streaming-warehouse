@@ -1,0 +1,30 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  IoTStream - Cloud-Native Data Pipeline Infrastructure
+
+Resources:
+  # 1. Dead Letter Queue for failed telemetry events
+  TelemetryDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600 # 14 days (Maximum allowed)
+
+  # 2. Main Telemetry Ingestion Queue
+  TelemetryQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 60 # Seconds the message is hidden from other workers while processing
+      MessageRetentionPeriod: 345600 # 4 days
+      ReceiveMessageWaitTimeSeconds: 20 # Long polling to reduce API costs
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt TelemetryDLQ.Arn
+        maxReceiveCount: 3 # Move to DLQ after 3 failed processing attempts
+
+Outputs:
+  TelemetryQueueUrl:
+    Description: "URL of the main telemetry queue"
+    Value: !Ref TelemetryQueue
+  TelemetryQueueArn:
+    Description: "ARN of the main telemetry queue"
+    Value: !GetAtt TelemetryQueue.Arn

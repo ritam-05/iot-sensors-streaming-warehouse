@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'IoTStream - Cloud-Native Data Pipeline Infrastructure
+
+  '
+Resources:
+  TelemetryDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+  TelemetryQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 60
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 20
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - TelemetryDLQ
+          - Arn
+        maxReceiveCount: 3
+Outputs:
+  TelemetryQueueUrl:
+    Description: URL of the main telemetry queue
+    Value:
+      Ref: TelemetryQueue
+  TelemetryQueueArn:
+    Description: ARN of the main telemetry queue
+    Value:
+      Fn::GetAtt:
+      - TelemetryQueue
+      - Arn
