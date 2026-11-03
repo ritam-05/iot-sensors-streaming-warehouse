@@ -129,18 +129,30 @@ flowchart LR
 ## Repository layout
 
 ```text
-infrastructure/template.yaml          AWS SAM infrastructure and Lambda wiring
-scripts/preflight.py                  AWS credential and permission checks
-src/generator/handler.py              Scheduled IoT simulator Lambda
-src/etl/handler.py                    SQS-triggered enrichment and routing Lambda
-src/etl/anomaly_detector.py           Threshold-based anomaly classification
-src/etl/thresholds.json               Anomaly thresholds
-src/warehouse/ingestion.py            Warehouse Queue to MotherDuck Bronze loader
-src/orchestrator.py                   Continuous local ingestion and dbt runner
-src/transformations/models/sources.yml Bronze source declaration
-src/transformations/models/silver/    Cleaned, deduplicated telemetry model
-src/transformations/models/gold/      Hourly operational aggregates
-docs/images/                          Architecture and verification screenshots
+📁 infrastructure/
+└── 📄 template.yaml                  AWS SAM infrastructure and Lambda wiring
+
+📁 scripts/
+└── 📄 preflight.py                   AWS credential and permission checks
+
+📁 src/
+├── 📁 generator/
+│   └── 📄 handler.py                 Scheduled IoT simulator Lambda
+├── 📁 etl/
+│   ├── 📄 handler.py                 SQS-triggered enrichment and routing Lambda
+│   ├── 📄 anomaly_detector.py        Threshold-based anomaly classification
+│   └── 📄 thresholds.json            Anomaly thresholds
+├── 📁 warehouse/
+│   └── 📄 ingestion.py               Warehouse Queue to MotherDuck Bronze loader
+├── 📁 transformations/
+│   └── 📁 models/
+│       ├── 📄 sources.yml            Bronze source declaration
+│       ├── 📁 silver/                Cleaned, deduplicated telemetry model
+│       └── 📁 gold/                  Hourly operational aggregates
+└── 📄 orchestrator.py                Continuous local ingestion and dbt runner
+
+📁 docs/
+└── 📁 images/                        Architecture and verification screenshots
 ```
 
 ## Technology stack
