@@ -1,49 +1,58 @@
-# IoT Streaming Data Warehouse
+<h1 align="center">IoT Streaming Data Warehouse</h1>
 
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" alt="Python" height="42" />
-  <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/amazonwebservices/amazonwebservices-original-wordmark.svg" alt="AWS: SAM, Lambda, SQS, DynamoDB, EventBridge" height="42" />
-  <img src="https://www.vectorlogo.zone/logos/getdbt/getdbt-icon.svg" alt="dbt" height="42" />
-  <img src="https://duckdb.org/images/DuckDB-Logo.svg" alt="DuckDB and MotherDuck" height="42" />
+  An event-driven reference architecture for simulating, processing, and analyzing industrial IoT telemetry.
 </p>
 
-<p align="center"><strong>Python</strong> &nbsp;•&nbsp; <strong>AWS SAM</strong> &nbsp;•&nbsp; <strong>Lambda</strong> &nbsp;•&nbsp; <strong>Amazon SQS</strong> &nbsp;•&nbsp; <strong>DynamoDB</strong> &nbsp;•&nbsp; <strong>MotherDuck</strong> &nbsp;•&nbsp; <strong>dbt</strong></p>
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.12" />
+  <img src="https://img.shields.io/badge/AWS-SAM%20%7C%20Lambda-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="AWS SAM and Lambda" />
+  <img src="https://img.shields.io/badge/Amazon-SQS%20%7C%20DynamoDB-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="Amazon SQS and DynamoDB" />
+  <img src="https://img.shields.io/badge/MotherDuck-DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black" alt="MotherDuck and DuckDB" />
+  <img src="https://img.shields.io/badge/dbt-Analytics-FF694B?style=for-the-badge&logo=dbt&logoColor=white" alt="dbt" />
+</p>
 
-![IoT streaming data warehouse architecture](docs/images/iot-streaming-data-warehouse.png)
+<p align="center">
+  <a href="#architecture">Architecture</a> &middot;
+  <a href="#setup-and-deployment">Setup</a> &middot;
+  <a href="#operating-the-pipeline">Operations</a> &middot;
+  <a href="#pipeline-verification">Verification</a>
+</p>
 
-An event-driven pipeline that simulates industrial IoT telemetry, processes it in AWS, maintains a real-time device-state view, and creates analytics-ready Bronze, Silver, and Gold datasets in MotherDuck.
+<p align="center">
+  <img src="docs/images/iot-streaming-data-warehouse.png" alt="IoT streaming data warehouse architecture" width="900" />
+</p>
 
-## Contents
+This project demonstrates a complete telemetry path: simulated sensor readings are published to AWS, enriched and stored as real-time device state, loaded into MotherDuck, and transformed into trusted analytical models.
 
-- [Architecture](#architecture)
-- [Pipeline walkthrough](#pipeline-walkthrough)
-- [Repository layout](#repository-layout)
-- [Setup and deployment](#setup-and-deployment)
-- [Operating the pipeline](#operating-the-pipeline)
-- [Data model and transformations](#data-model-and-transformations)
-- [Reliability and security](#reliability-and-security)
-- [Pipeline verification](#pipeline-verification)
+| Capability | Implementation |
+| --- | --- |
+| Event production | EventBridge schedule and Python simulator Lambda |
+| Real-time processing | Amazon SQS and an SQS-triggered ETL Lambda |
+| Operational store | Amazon DynamoDB latest-device-state table |
+| Analytical warehouse | MotherDuck Bronze ingestion with DuckDB |
+| Data modeling | dbt Silver cleaning and Gold hourly aggregates |
 
 ## Architecture
 
 ```text
 EventBridge schedule (every minute)
-            │
-            ▼
-Simulator Lambda ──► Telemetry SQS Queue ──► Telemetry DLQ
-                            │
-                            ▼
+            |
+            v
+Simulator Lambda --> Telemetry SQS Queue --> Telemetry DLQ
+                            |
+                            v
                        ETL Lambda
-                       ├──► DynamoDB: latest device state
-                       └──► Warehouse SQS Queue ──► Warehouse DLQ
-                                             │
-                                             ▼
+                       |--> DynamoDB: latest device state
+                       `--> Warehouse SQS Queue --> Warehouse DLQ
+                                             |
+                                             v
                            Local ingestion job / orchestrator
-                                             │
-                                             ▼
+                                             |
+                                             v
                               MotherDuck Bronze table
-                                             │
-                                             ▼
+                                             |
+                                             v
                                 dbt Silver and Gold models
 ```
 
@@ -53,7 +62,7 @@ The AWS SAM stack provisions both queues and their dead-letter queues, the Dynam
 
 ### 1. Simulate IoT telemetry
 
-`src/generator/handler.py` is invoked every minute by `SimulatorFunction`. It generates 5–15 readings per run for simulated machines, each containing an event ID, device and machine IDs, UTC timestamp, temperature, humidity, vibration, pressure, battery, device status, and schema version.
+`src/generator/handler.py` is invoked every minute by `SimulatorFunction`. It generates 5-15 readings per run for simulated machines, each containing an event ID, device and machine IDs, UTC timestamp, temperature, humidity, vibration, pressure, battery, device status, and schema version.
 
 The function serializes each reading to JSON and sends it to `TelemetryQueue`. Sends are split into groups of at most ten messages to comply with the SQS batch limit.
 
