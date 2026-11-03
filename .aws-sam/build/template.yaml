@@ -20,14 +20,42 @@ Resources:
           - TelemetryDLQ
           - Arn
         maxReceiveCount: 3
+  WarehouseDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+  WarehouseQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 60
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 20
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - WarehouseDLQ
+          - Arn
+        maxReceiveCount: 3
+  DeviceStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: iotstream_device_state
+      AttributeDefinitions:
+      - AttributeName: device_id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: device_id
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
 Outputs:
   TelemetryQueueUrl:
-    Description: URL of the main telemetry queue
     Value:
       Ref: TelemetryQueue
-  TelemetryQueueArn:
-    Description: ARN of the main telemetry queue
+  WarehouseQueueUrl:
     Value:
-      Fn::GetAtt:
-      - TelemetryQueue
-      - Arn
+      Ref: WarehouseQueue
+  DeviceStateTableName:
+    Value:
+      Ref: DeviceStateTable

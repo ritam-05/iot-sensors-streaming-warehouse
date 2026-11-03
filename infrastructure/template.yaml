@@ -4,27 +4,58 @@ Description: >
   IoTStream - Cloud-Native Data Pipeline Infrastructure
 
 Resources:
-  # 1. Dead Letter Queue for failed telemetry events
+  # 1. Main Telemetry Ingestion Queue & DLQ
   TelemetryDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      MessageRetentionPeriod: 1209600 # 14 days (Maximum allowed)
+      MessageRetentionPeriod: 1209600 
 
-  # 2. Main Telemetry Ingestion Queue
   TelemetryQueue:
     Type: AWS::SQS::Queue
     Properties:
-      VisibilityTimeout: 60 # Seconds the message is hidden from other workers while processing
-      MessageRetentionPeriod: 345600 # 4 days
-      ReceiveMessageWaitTimeSeconds: 20 # Long polling to reduce API costs
+      VisibilityTimeout: 60
+      MessageRetentionPeriod: 345600 
+      ReceiveMessageWaitTimeSeconds: 20 
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt TelemetryDLQ.Arn
-        maxReceiveCount: 3 # Move to DLQ after 3 failed processing attempts
+        maxReceiveCount: 3
+
+  # 2. Warehouse Ingestion Queue & DLQ (Phase 8)
+  WarehouseDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+
+  WarehouseQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 60
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 20
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt WarehouseDLQ.Arn
+        maxReceiveCount: 3
+
+  # 3. DynamoDB Operational State Table (Phase 7)
+  DeviceStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: iotstream_device_state
+      AttributeDefinitions:
+        - AttributeName: device_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: device_id
+          KeyType: HASH
+      # Using provisioned capacity explicitly stays within the 25 WCU/RCU Always Free tier
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
 
 Outputs:
   TelemetryQueueUrl:
-    Description: "URL of the main telemetry queue"
     Value: !Ref TelemetryQueue
-  TelemetryQueueArn:
-    Description: "ARN of the main telemetry queue"
-    Value: !GetAtt TelemetryQueue.Arn
+  WarehouseQueueUrl:
+    Value: !Ref WarehouseQueue
+  DeviceStateTableName:
+    Value: !Ref DeviceStateTable
