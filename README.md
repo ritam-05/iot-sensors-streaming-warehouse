@@ -23,7 +23,9 @@
   <img src="docs/images/iot-streaming-data-warehouse.png" alt="IoT streaming data warehouse architecture" width="900" />
 </p>
 
-This project demonstrates a complete telemetry path: simulated sensor readings are published to AWS, enriched and stored as real-time device state, loaded into MotherDuck, and transformed into trusted analytical models.
+This project demonstrates a complete **real-time telemetry path**: simulated sensor readings are published to AWS, enriched and stored as real-time device state, continuously loaded into MotherDuck, and transformed into trusted analytical models.
+
+> **Real-time and continuous by design:** EventBridge produces telemetry every minute, SQS buffers it immediately, the ETL Lambda reacts to queued events, and the local orchestrator continuously ingests warehouse events and runs dbt every 60 seconds.
 
 | Capability | Implementation |
 | --- | --- |
@@ -77,47 +79,74 @@ Simulator Lambda --> Telemetry SQS Queue --> Telemetry DLQ
 
 The AWS SAM stack provisions both queues and their dead-letter queues, the DynamoDB state table, an SQS-triggered ETL Lambda, and an EventBridge-scheduled simulator Lambda. The warehouse ingestion and dbt steps are run locally through the included Python orchestrator.
 
-## Pipeline walkthrough
+## Pipeline workflow
 
-### 1. Simulate IoT telemetry
+The solution runs as a **continuous real-time six-stage loop** for ten simulated industrial machines (`MACHINE-01` through `MACHINE-10`). AWS owns real-time generation, buffering, enrichment, and live state management; the local orchestrator continuously loads and models analytical data in MotherDuck.
 
-`src/generator/handler.py` is invoked every minute by `SimulatorFunction`. It generates 5-15 readings per run for simulated machines, each containing an event ID, device and machine IDs, UTC timestamp, temperature, humidity, vibration, pressure, battery, device status, and schema version.
+### Stage 1 - Telemetry generation
 
-The function serializes each reading to JSON and sends it to `TelemetryQueue`. Sends are split into groups of at most ten messages to comply with the SQS batch limit.
+AWS EventBridge invokes `src/generator/handler.py` every minute. The Simulator Lambda creates a randomized subset of 5-15 sensor readings, including temperature, vibration, battery, pressure, humidity, device status, and a unique event ID. It serializes the readings into JSON and sends them in SQS-safe batches of ten or fewer.
 
-### 2. Buffer raw events with SQS
+```mermaid
+flowchart LR
+    EB[EventBridge: every minute] --> SIM[Simulator Lambda]
+    SIM --> DATA[5-15 JSON telemetry events]
+```
 
-`TelemetryQueue` decouples the producer from ETL. It uses 20-second long polling, a 60-second visibility timeout, four-day retention, and sends messages that fail three times to `TelemetryDLQ` for inspection and replay.
+### Stage 2 - Ingestion and buffering
 
-### 3. Enrich and classify events in the ETL Lambda
+The simulator publishes raw events to `TelemetryQueue`. This standard SQS queue absorbs traffic bursts and separates telemetry generation from processing. Messages that cannot be processed after three receives move to `TelemetryDLQ` for inspection or replay.
 
-`ETLProcessorFunction` consumes `TelemetryQueue` in batches of ten. `src/etl/handler.py` parses decimal telemetry safely for DynamoDB, then uses `AnomalyDetector` to add `anomaly_status` and `anomaly_reasons` to every event.
+```mermaid
+flowchart LR
+    SIM[Simulator Lambda] --> TQ[TelemetryQueue]
+    TQ -. after 3 failed receives .-> DLQ[TelemetryDLQ]
+```
 
-The detector reads `src/etl/thresholds.json` and classifies temperature, vibration, battery, and offline-device conditions as `NORMAL`, `WARNING`, or `CRITICAL`.
+### Stage 3 - Real-time enrichment and state
 
-### 4. Store current device state in DynamoDB
+New telemetry messages trigger `src/etl/handler.py` in batches of ten. The ETL Lambda evaluates threshold rules from `src/etl/thresholds.json`, appends `anomaly_status` and `anomaly_reasons`, upserts the latest record per `device_id` into `iotstream_device_state`, and routes the enriched event to `WarehouseQueue`.
 
-The ETL Lambda writes each enriched event to `DeviceStateTable`. Because `device_id` is the table key, the newest reading replaces the prior state for that device, creating a low-latency operational view.
+Because DynamoDB uses `device_id` as its partition key, it serves as a compact real-time snapshot of the latest known state for the simulated devices.
 
-SAM supplies `DYNAMODB_TABLE_NAME` from `DeviceStateTable` and grants the Lambda table-scoped `DynamoDBCrudPolicy` permissions.
+```mermaid
+flowchart LR
+    TQ[TelemetryQueue] --> ETL[ETL Lambda]
+    ETL --> DETECT[Anomaly detector]
+    DETECT --> DDB[(DynamoDB: current state)]
+    DETECT --> WQ[WarehouseQueue]
+```
 
-### 5. Route enriched data for analytics
+### Stage 4 - Continuous warehouse ingestion
 
-The ETL Lambda sends the enriched event to `WarehouseQueue`. This isolates real-time state updates from warehouse loading. `WarehouseQueue` uses the same visibility, retention, long-polling, and DLQ strategy as the telemetry queue.
+`src/orchestrator.py` runs continuously and calls `src/warehouse/ingestion.py` once per 60-second cycle. The ingestion job polls `WarehouseQueue` with boto3, creates `bronze_telemetry` if necessary, writes events to MotherDuck with DuckDB, and deletes only successfully inserted SQS messages. It also supplies a processing timestamp if one is absent from the event.
 
-### 6. Load MotherDuck Bronze
+```mermaid
+flowchart LR
+    WQ[WarehouseQueue] --> ING[Python ingestion job]
+    ING --> BRONZE[(MotherDuck: bronze_telemetry)]
+    ING --> ACK[Delete successfully inserted SQS messages]
+```
 
-`src/warehouse/ingestion.py` connects to `md:iotstream_db`, creates `bronze_telemetry` when needed, retrieves up to ten warehouse messages, and inserts the enriched fields into Bronze. It deletes SQS messages only after their corresponding inserts finish.
+### Stage 5 - dbt transformations
 
-### 7. Transform Bronze into Silver and Gold
+Immediately after ingestion, the orchestrator executes `dbt run`. The Bronze layer retains historical enriched telemetry; `silver_telemetry` cleans, normalizes, types, and deduplicates it; `gold_hourly_machine_stats` aggregates hourly temperature, vibration, battery, event-volume, and anomaly metrics by machine and device.
 
-The dbt project in `src/transformations` models the MotherDuck data. `silver_telemetry` deduplicates events by `event_id`, normalizes statuses, and casts timestamps. `gold_hourly_machine_stats` aggregates clean telemetry per machine, device, and hour.
+```mermaid
+flowchart LR
+    BRONZE[(Bronze telemetry)] --> SILVER[dbt: silver_telemetry]
+    SILVER --> GOLD[dbt: gold_hourly_machine_stats]
+```
 
-Gold outputs include average and maximum temperature and vibration, minimum battery level, anomaly counts, and total event volume for monitoring and reporting.
+### Stage 6 - BI and analytics consumption
 
-### 8. Run the warehouse loop
+The Gold model is the analytics-facing layer for operational dashboards, reporting, or data science workloads. MotherDuck can be queried directly with DuckDB-compatible tools; Power BI or R can be connected separately through an appropriate DuckDB/ODBC integration when required.
 
-`src/orchestrator.py` runs the warehouse ingestion job, runs `dbt run`, then sleeps for 60 seconds before starting the next cycle. It provides a repeatable local bridge between the deployed AWS event path and MotherDuck transformations.
+```mermaid
+flowchart LR
+    GOLD[(Gold hourly machine stats)] --> BI[Dashboards and reporting]
+    GOLD --> DS[Data science and ad hoc analysis]
+```
 
 ## Repository layout
 
@@ -135,6 +164,19 @@ src/transformations/models/silver/    Cleaned, deduplicated telemetry model
 src/transformations/models/gold/      Hourly operational aggregates
 docs/images/                          Architecture and verification screenshots
 ```
+
+## Technology stack
+
+| Area | Technologies | Role in the pipeline |
+| --- | --- | --- |
+| Cloud infrastructure | AWS SAM, CloudFormation | Defines and deploys the serverless resources. |
+| Event scheduling and compute | EventBridge, AWS Lambda, Python 3.12 | Runs the autonomous simulator and ETL processor. |
+| Messaging | Amazon SQS and DLQs | Buffers events, decouples stages, and captures failed messages. |
+| Operational state | Amazon DynamoDB | Stores the latest enriched state for each device. |
+| Warehouse | MotherDuck, DuckDB | Hosts and loads the historical telemetry data. |
+| Transformations | dbt Core, dbt-duckdb | Builds tested Silver and Gold analytical models. |
+| Python libraries | boto3, duckdb, python-dotenv | Provides AWS access, warehouse connectivity, and local configuration. |
+| Optional analytics clients | DuckDB-compatible SQL tools, Power BI, R | Consume the Gold layer when separately configured. |
 
 ## Setup and deployment
 
@@ -202,7 +244,7 @@ After deployment, EventBridge invokes the simulator every minute and the ETL Lam
 python src/orchestrator.py
 ```
 
-Each cycle loads available warehouse messages into MotherDuck, runs dbt transformations, and waits one minute. Stop it with `Ctrl+C`.
+Each continuous 60-second cycle loads available warehouse messages into MotherDuck and immediately runs dbt transformations. This keeps Bronze, Silver, and Gold datasets close to the incoming real-time event stream; stop the loop with `Ctrl+C`.
 
 ### Run stages manually
 
@@ -280,3 +322,29 @@ The terminal log records the local ingestion loop followed by dbt execution. It 
 ![MotherDuck UI showing populated Bronze and aggregated Gold layer tables](docs/images/motherduck-sql-queries.png)
 
 The MotherDuck UI shows populated Bronze data and aggregated Gold results. Together, these tables provide the final evidence that raw telemetry reaches an analytics-ready warehouse layer.
+
+## Scalability
+
+### Scenario 1 - Malformed sensor data and poison-pill handling
+
+**Problem:** A firmware update could cause sensors to send malformed JSON or strings where numeric telemetry values are expected. If the ETL Lambda cannot parse a message, processing of that message fails.
+
+**Response:** The architecture uses Amazon SQS dead-letter queues (DLQs). After three failed receives, as configured by `maxReceiveCount`, SQS moves the message to `TelemetryDLQ` instead of allowing a poison pill to repeatedly block normal processing. A CloudWatch alarm on DLQ depth can notify the engineering team to inspect the payload, correct the parser or producer, and redrive the retained messages without losing them.
+
+### Scenario 2 - Fully cloud-native continuous ingestion
+
+**Problem:** `src/orchestrator.py` currently runs locally to load MotherDuck and invoke dbt. If that machine stops, the continuous warehouse-ingestion loop also stops.
+
+**Response:** Package the orchestrator and dbt environment in a Docker image and run it continuously on AWS ECS with Fargate. For short, event-driven workloads, the warehouse consumer can instead be redesigned as a Lambda function triggered by `WarehouseQueue`. Either approach removes the local-machine dependency while retaining MotherDuck as the serverless analytical warehouse.
+
+### Scenario 3 - Scaling from 10 to 10,000 devices
+
+**Problem:** SQS and Lambda scale automatically, but processing a much larger fleet in batches of ten could increase Lambda invocations and cost.
+
+**Response:** Increase the SQS-to-Lambda event-source batch size, up to 1,000 where workload latency, timeout, and partial-failure handling permit, to process more records per invocation. At high analytical volumes, route enriched data to Amazon S3 through Kinesis Data Firehose and query the data lake from MotherDuck, reducing reliance on a second queue for bulk warehouse ingestion.
+
+### Scenario 4 - Predictive maintenance with machine learning
+
+**Problem:** The current ETL logic detects anomalies using static threshold rules; it cannot estimate whether a machine is likely to fail soon.
+
+**Response:** Use the historical Bronze telemetry to train a predictive-maintenance model, such as Random Forest or XGBoost. Deploy the model behind an inference API or package it with the ETL runtime; the ETL Lambda can then append a `failure_probability` score to each live event before writing the operational state to DynamoDB and routing the event to MotherDuck.
