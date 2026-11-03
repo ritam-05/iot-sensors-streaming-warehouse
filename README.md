@@ -178,3 +178,29 @@ The current `models/example` directory contains dbt's starter models. Replace th
 2. Add automated tests for schema validation, anomaly boundaries, transformer output, and failure/retry behavior.
 3. Replace the example dbt models with bronze-to-silver-to-gold transformations and data-quality tests.
 4. Add observability for queue depth, DLQ messages, Lambda failures, ingestion latency, and anomaly rates.
+
+## Pipeline Verification
+
+### AWS SQS message flow
+
+![AWS SQS dashboard showing active message flow](docs/images/aws-sqs-dashboard.png)
+
+The SQS dashboard shows messages moving through the telemetry and warehouse queues, confirming that the cloud-side producer and routing stages are actively exchanging events.
+
+### DynamoDB real-time device state
+
+![DynamoDB table showing real-time device state updates](docs/images/dynamodb-real-time-state.png)
+
+The DynamoDB table contains the latest state for each device, proving that the ETL processor persists enriched operational data as telemetry arrives.
+
+### Local orchestrator and dbt execution
+
+![Local terminal logs showing the Python orchestrator and dbt execution](docs/images/orchestrator-terminal-logs.png)
+
+The terminal output records the Python orchestration stages and dbt run, connecting the queue-driven ingestion process to warehouse transformation execution.
+
+### MotherDuck Bronze and Gold layers
+
+![MotherDuck UI showing populated Bronze and aggregated Gold layer tables](docs/images/motherduck-sql-queries.png)
+
+The MotherDuck results show populated Bronze telemetry alongside aggregated Gold tables, verifying that raw cloud events complete the autonomous flow through dbt into analytics-ready datasets.

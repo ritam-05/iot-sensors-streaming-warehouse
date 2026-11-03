@@ -2,30 +2,23 @@ import os
 import json
 import boto3
 import duckdb
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
+# Force load variables from .env
 load_dotenv()
 
 def run_ingestion():
-    queue_url = os.environ.get("WAREHOUSE_QUEUE_URL")
-    sqs_client = boto3.client('sqs')
-    
     print("Establishing connection to MotherDuck...")
-    # Connect to the default MotherDuck environment first
-    con = duckdb.connect('md:')
+    # This automatically uses the MOTHERDUCK_TOKEN environment variable
+    con = duckdb.connect('md:iotstream_db')
     
     print("Ensuring database and bronze_telemetry table exist...")
-    # Create the database if it doesn't exist, then switch to it
-    con.execute("CREATE DATABASE IF NOT EXISTS iotstream_db;")
-    con.execute("USE iotstream_db;")
-    
-    con.execute("""
+    con.sql("""
         CREATE TABLE IF NOT EXISTS bronze_telemetry (
             event_id VARCHAR,
             device_id VARCHAR,
             machine_id VARCHAR,
-            event_timestamp TIMESTAMP,
-            processing_timestamp TIMESTAMP,
             temperature DOUBLE,
             humidity DOUBLE,
             vibration DOUBLE,
@@ -33,51 +26,84 @@ def run_ingestion():
             battery INTEGER,
             device_status VARCHAR,
             anomaly_status VARCHAR,
-            anomaly_reasons VARCHAR[],
-            schema_version INTEGER,
-            processing_version VARCHAR
-        );
+            anomaly_reasons VARCHAR,
+            event_timestamp TIMESTAMP,
+            processing_timestamp TIMESTAMP,
+            schema_version INTEGER
+        )
     """)
+
+    warehouse_queue_url = os.environ.get("WAREHOUSE_QUEUE_URL")
+    if not warehouse_queue_url:
+        print("Error: WAREHOUSE_QUEUE_URL is not set in .env")
+        return
+
+    sqs_client = boto3.client('sqs')
     
     print("Polling Warehouse Queue for ready events...")
     response = sqs_client.receive_message(
-        QueueUrl=queue_url,
+        QueueUrl=warehouse_queue_url,
         MaxNumberOfMessages=10,
         WaitTimeSeconds=5
     )
     
     messages = response.get('Messages', [])
+    
     if not messages:
         print("No events found in the queue. Ingestion complete.")
         return
-
+        
     print(f"Retrieved {len(messages)} events. Inserting into MotherDuck...")
     
-    records = []
+    entries_to_delete = []
+    
     for msg in messages:
         body = json.loads(msg['Body'])
-        records.append((
-            body['event_id'], body['device_id'], body['machine_id'],
-            body['event_timestamp'], body['processing_timestamp'],
-            body['temperature'], body['humidity'], body['vibration'],
-            body['pressure'], body['battery'], body['device_status'],
-            body['anomaly_status'], body['anomaly_reasons'],
-            body['schema_version'], body['processing_version']
+        
+        # Safely extract variables
+        event_id = body.get('event_id')
+        device_id = body.get('device_id')
+        machine_id = body.get('machine_id')
+        temperature = body.get('temperature')
+        humidity = body.get('humidity')
+        vibration = body.get('vibration')
+        pressure = body.get('pressure')
+        battery = body.get('battery')
+        device_status = body.get('device_status')
+        anomaly_status = body.get('anomaly_status', 'NORMAL')
+        anomaly_reasons = json.dumps(body.get('anomaly_reasons', []))
+        event_timestamp = body.get('event_timestamp')
+        
+        # The fix: Safely generate the processing timestamp if it isn't in the AWS payload
+        processing_timestamp = body.get('processing_timestamp', datetime.now(timezone.utc).isoformat())
+        schema_version = body.get('schema_version', 1)
+        
+        # Insert into MotherDuck
+        con.execute("""
+            INSERT INTO bronze_telemetry (
+                event_id, device_id, machine_id, temperature, humidity, 
+                vibration, pressure, battery, device_status, anomaly_status, 
+                anomaly_reasons, event_timestamp, processing_timestamp, schema_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            event_id, device_id, machine_id, temperature, humidity,
+            vibration, pressure, battery, device_status, anomaly_status,
+            anomaly_reasons, event_timestamp, processing_timestamp, schema_version
         ))
         
-    # Bulk insert directly into the cloud database
-    con.executemany("""
-        INSERT INTO bronze_telemetry VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, records)
-    
-    print("Data committed to MotherDuck. Cleaning up SQS...")
-    for msg in messages:
-        sqs_client.delete_message(
-            QueueUrl=queue_url,
-            ReceiptHandle=msg['ReceiptHandle']
-        )
+        # Mark for deletion so SQS doesn't send it again
+        entries_to_delete.append({
+            'Id': msg['MessageId'],
+            'ReceiptHandle': msg['ReceiptHandle']
+        })
         
-    print("Batch ingestion complete.")
+    # Delete processed messages from the queue
+    if entries_to_delete:
+        sqs_client.delete_message_batch(
+            QueueUrl=warehouse_queue_url,
+            Entries=entries_to_delete
+        )
+        print(f"Batch ingestion complete. Deleted {len(entries_to_delete)} messages from SQS.")
 
 if __name__ == "__main__":
     run_ingestion()

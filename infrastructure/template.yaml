@@ -52,6 +52,58 @@ Resources:
         ReadCapacityUnits: 5
         WriteCapacityUnits: 5
 
+  # 4. ETL Processor Lambda Function
+  ETLProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/etl/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          WAREHOUSE_QUEUE_URL: !Ref WarehouseQueue
+          DYNAMODB_TABLE_NAME: !Ref DeviceStateTable
+      Policies:
+        # Grant permission to read from the Telemetry SQS
+        - SQSPollerPolicy:
+            QueueName: !GetAtt TelemetryQueue.QueueName
+        # Grant permission to send to the Warehouse SQS
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt WarehouseQueue.QueueName
+        # Grant permission to write to the real-time DynamoDB table
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DeviceStateTable
+      Events:
+        # This attaches the Lambda to the Queue automatically
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TelemetryQueue.Arn
+            BatchSize: 10
+
+  # 5. Autonomous IoT Simulator
+  SimulatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/generator/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          TELEMETRY_QUEUE_URL: !Ref TelemetryQueue
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt TelemetryQueue.QueueName
+      Events:
+        MinuteTimer:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+
 Outputs:
   TelemetryQueueUrl:
     Value: !Ref TelemetryQueue

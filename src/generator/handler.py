@@ -1,85 +1,54 @@
 import os
 import json
+import uuid
+import random
+from datetime import datetime, timezone
 import boto3
-from dotenv import load_dotenv
 
-# Load environment variables from the .env file
-load_dotenv()
-
-# Support both Lambda's package import and direct local execution of this file.
-try:
-    from src.generator.simulator import IoTSimulator
-    from src.generator.schema import TelemetryEvent
-except ModuleNotFoundError:
-    from simulator import IoTSimulator
-    from schema import TelemetryEvent
-
-# Initialize the Boto3 client outside the handler for warm-start performance
+# Initialize outside handler for warm-start efficiency
 sqs_client = boto3.client('sqs')
 
 def lambda_handler(event, context):
-    """
-    AWS Lambda entry point triggered by EventBridge Scheduler.
-    """
-    # We will set this environment variable later during infrastructure deployment
+    """Triggered automatically by EventBridge every minute."""
     queue_url = os.environ.get("TELEMETRY_QUEUE_URL")
     
-    print("Initializing IoT Simulator...")
-    simulator = IoTSimulator()
-    raw_events = simulator.generate_batch()
-    
-    valid_events = []
-    
-    # Phase 3 Integration: Validate all events
-    for raw_event in raw_events:
-        try:
-            validated_event = TelemetryEvent(**raw_event)
-            valid_events.append(validated_event)
-        except Exception as e:
-            print(f"Validation failed for event {raw_event.get('event_id')}: {e}")
-            
-    if not valid_events:
-        print("No valid events to send.")
-        return {"statusCode": 400, "body": "No valid events generated."}
-
-    # Prepare SQS Batch entries (Max 10 messages per batch in AWS SQS)
+    # Simulate a burst of 5 to 15 concurrent sensor readings
+    num_events = random.randint(5, 15)
     entries = []
-    for evt in valid_events:
+    
+    for _ in range(num_events):
+        machine_id = f"MACHINE-{random.randint(1, 10):02d}"
+        
+        payload = {
+            "event_id": f"evt-{uuid.uuid4().hex[:8]}",
+            "device_id": f"sensor-{machine_id[-2:]}",
+            "machine_id": machine_id,
+            "event_timestamp": datetime.now(timezone.utc).isoformat(),
+            "temperature": round(random.uniform(60.0, 95.0), 2),
+            "humidity": round(random.uniform(30.0, 60.0), 2),
+            "vibration": round(random.uniform(1.0, 6.0), 2),
+            "pressure": round(random.uniform(90.0, 110.0), 2),
+            "battery": random.randint(5, 100),
+            "device_status": random.choice(["ONLINE", "ONLINE", "ONLINE", "OFFLINE"]),
+            "schema_version": 1
+        }
+        
         entries.append({
-            'Id': evt.event_id,
-            'MessageBody': evt.model_dump_json()
+            'Id': payload['event_id'],
+            'MessageBody': json.dumps(payload)
         })
         
-    print(f"Prepared {len(entries)} valid events for SQS.")
-
-    # Local testing bypass
-    if not queue_url:
-        print("\n[LOCAL MODE] TELEMETRY_QUEUE_URL is not set.")
-        print("Simulating SQS batch send locally:\n")
-        print(json.dumps([json.loads(e['MessageBody']) for e in entries], indent=2))
-        return {"statusCode": 200, "body": "Executed locally without SQS."}
-
-    # Send to AWS SQS
-    try:
-        response = sqs_client.send_message_batch(
-            QueueUrl=queue_url,
-            Entries=entries
-        )
-        
-        # SQS Batch partial failure handling
-        if 'Failed' in response and response['Failed']:
-            print(f"Failed to send {len(response['Failed'])} messages: {response['Failed']}")
-            # Raising an exception forces Lambda to report failure, triggering EventBridge retries
-            raise RuntimeError(f"Partial batch failure in SQS submission.")
-        else:
-            print(f"Successfully sent {len(entries)} events to SQS.")
+    if entries and queue_url:
+        # AWS SQS only accepts 10 messages per batch request. Chunk the list.
+        for i in range(0, len(entries), 10):
+            batch = entries[i:i+10]
+            sqs_client.send_message_batch(QueueUrl=queue_url, Entries=batch)
             
-        return {"statusCode": 200, "body": "Successfully sent to SQS"}
-    
-    except Exception as e:
-        print(f"Error sending batch to SQS: {e}")
-        raise e
+    print(f"Autonomous cycle complete: Pushed {len(entries)} events to SQS.")
+    return {"statusCode": 200, "body": f"Generated {len(entries)} events."}
 
-# Local testing block
+# Keep local testing ability
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
     lambda_handler({}, None)

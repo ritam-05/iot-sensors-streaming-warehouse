@@ -1,0 +1,14 @@
+{
+  "temperature": {
+    "warning": 80.0,
+    "critical": 90.0
+  },
+  "vibration": {
+    "warning": 4.0,
+    "critical": 5.0
+  },
+  "battery": {
+    "warning": 20,
+    "critical": 10
+  }
+}

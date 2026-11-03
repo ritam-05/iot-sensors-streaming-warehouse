@@ -49,6 +49,70 @@ Resources:
       ProvisionedThroughput:
         ReadCapacityUnits: 5
         WriteCapacityUnits: 5
+  ETLProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ETLProcessorFunction
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          WAREHOUSE_QUEUE_URL:
+            Ref: WarehouseQueue
+          DYNAMODB_TABLE_NAME:
+            Ref: DeviceStateTable
+      Policies:
+      - SQSPollerPolicy:
+          QueueName:
+            Fn::GetAtt:
+            - TelemetryQueue
+            - QueueName
+      - SQSSendMessagePolicy:
+          QueueName:
+            Fn::GetAtt:
+            - WarehouseQueue
+            - QueueName
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: DeviceStateTable
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt:
+              - TelemetryQueue
+              - Arn
+            BatchSize: 10
+    Metadata:
+      SamResourceId: ETLProcessorFunction
+  SimulatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: SimulatorFunction
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          TELEMETRY_QUEUE_URL:
+            Ref: TelemetryQueue
+      Policies:
+      - SQSSendMessagePolicy:
+          QueueName:
+            Fn::GetAtt:
+            - TelemetryQueue
+            - QueueName
+      Events:
+        MinuteTimer:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+    Metadata:
+      SamResourceId: SimulatorFunction
 Outputs:
   TelemetryQueueUrl:
     Value:

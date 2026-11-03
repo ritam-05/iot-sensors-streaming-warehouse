@@ -26,6 +26,8 @@ htmlcov/
 .aws-sam/
 
 # dbt build artifacts and local DuckDB databases
+target/
+dbt_packages/
 src/transformations/target/
 src/transformations/dbt_packages/
 src/transformations/logs/

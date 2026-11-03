@@ -1,16 +1,16 @@
 import os
-import yaml
+import json
 
 class AnomalyDetector:
-    def __init__(self, config_path="config/thresholds.yaml"):
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        full_config_path = os.path.join(base_dir, config_path)
+    def __init__(self, config_filename="thresholds.json"):
+        # Look for the config file in the exact same directory as this script
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        full_config_path = os.path.join(current_dir, config_filename)
         
         with open(full_config_path, 'r') as f:
-            self.thresholds = yaml.safe_load(f)
+            self.thresholds = json.load(f)
 
     def evaluate(self, event: dict) -> dict:
-        """Evaluates sensor readings and returns anomaly metadata."""
         anomalies = []
         status = "NORMAL"
 
