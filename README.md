@@ -17,6 +17,7 @@
   <a href="#setup-and-deployment">Setup</a> &middot;
   <a href="#operating-the-pipeline">Operations</a> &middot;
   <a href="docs/sample-data.md">Sample data</a> &middot;
+  <a href="#cost-transparency-and-troubleshooting">Operations guide</a> &middot;
   <a href="#pipeline-verification">Verification</a>
 </p>
 
@@ -289,6 +290,48 @@ See [Sample data](docs/sample-data.md) for representative records at each Bronze
 - DynamoDB uses 5 RCUs and 5 WCUs for predictable small-scale operational capacity.
 - Store AWS credentials and the MotherDuck token in `.env` or a managed secrets service, never in source control.
 - Silver-layer deduplication by `event_id` protects analytics from the at-least-once delivery semantics of SQS.
+
+## Architecture and operational limitations
+
+This repository is a working reference implementation, not a fully managed production platform. The following constraints are important when operating or extending it.
+
+| Area | Current behavior | Production consideration |
+| --- | --- | --- |
+| Warehouse ingestion | `src/orchestrator.py` runs on a local machine. | It is not highly available: ingestion pauses whenever that process or machine is unavailable. Run it on ECS Fargate, or redesign the consumer as a queue-triggered Lambda, for cloud-native continuity. |
+| Event volume | The simulator produces 5-15 events per minute and the ETL event-source batch size is 10. | Validate Lambda timeout, concurrency, batch size/window, and downstream throughput before increasing fleet size. |
+| SQS delivery | SQS provides at-least-once delivery. | Duplicate Bronze events are possible after retries; Silver deduplicates by `event_id`, but consumers must remain idempotent. |
+| Batch failures | The SQS event-source mapping does not currently use partial batch failure responses. | A failed Lambda invocation can cause the entire batch to be retried. Add `ReportBatchItemFailures` and return failed message IDs to limit duplicate processing. |
+| Poison messages | Both queues have DLQs after three receives. | DLQs isolate failures, but no CloudWatch alarm or automated redrive workflow is provisioned by the current template. |
+| Decimal serialization | ETL parses floating-point JSON values as `Decimal` for DynamoDB compatibility. | `json.dumps()` cannot serialize `Decimal` without a custom encoder or conversion. Add a Decimal-aware serializer before publishing enriched events to `WarehouseQueue`. |
+| DynamoDB state | The table stores one current item per `device_id`. | It is an operational snapshot, not device history; historical analysis belongs in MotherDuck. Consider point-in-time recovery, encryption controls, and capacity/autoscaling settings for production. |
+| BI integration | Gold tables are ready for consumption. | Dashboard, ODBC, Power BI, and R connections are not configured or deployed in this repository. |
+
+## Cost transparency and troubleshooting
+
+### Cost drivers and controls
+
+This project does not guarantee a fixed monthly cost. Actual charges depend on AWS region, traffic volume, data retention, MotherDuck usage, and any optional cloud-native worker you deploy. Review the current AWS and MotherDuck pricing pages and use the AWS Pricing Calculator before production deployment.
+
+| Service | Primary cost driver | Practical control |
+| --- | --- | --- |
+| AWS Lambda | Invocations, execution duration, configured memory, and concurrency. | Keep handlers efficient, set appropriate memory/timeouts, and batch SQS messages where latency permits. |
+| Amazon SQS | API requests, including sends, receives, deletes, and long-polling activity. | Batch sends/deletes, use long polling, and avoid unnecessary empty polls. |
+| DynamoDB | The configured 5 RCUs and 5 WCUs, storage, and optional protection features. | Monitor consumed capacity; move to on-demand or autoscaling only after measuring traffic. |
+| EventBridge | Scheduled rule invocations. | Keep schedules aligned to the business freshness requirement. |
+| MotherDuck | Storage and query/compute consumption under the selected plan. | Retain only useful raw data, optimize dbt models, and monitor query frequency. |
+| ECS Fargate (optional) | Provisioned vCPU and memory while tasks run. | Use a queue-driven or scheduled worker when continuous capacity is not required. |
+
+### Troubleshooting guide
+
+| Symptom | Likely cause | Check and response |
+| --- | --- | --- |
+| No telemetry reaches `TelemetryQueue` | EventBridge schedule, simulator deployment, or queue permissions are incorrect. | Check the Simulator Lambda's CloudWatch logs, EventBridge rule status, and `TELEMETRY_QUEUE_URL`. |
+| Messages accumulate in `TelemetryDLQ` | Invalid payloads, handler errors, or insufficient processing time. | Inspect the original messages and ETL Lambda logs; fix the producer/parser, then redrive validated messages. |
+| DynamoDB has no current device state | Missing `DYNAMODB_TABLE_NAME`, IAM access, or an ETL failure. | Confirm the Lambda environment variable, `DynamoDBCrudPolicy`, and ETL CloudWatch logs. |
+| ETL fails with `Decimal is not JSON serializable` | An enriched payload contains `Decimal` values before it is sent to SQS. | Convert Decimal values to a JSON-safe representation or use a custom JSON encoder before `send_message_batch`. |
+| `WarehouseQueue` grows continuously | The local orchestrator is stopped, missing credentials, or cannot reach MotherDuck. | Start `python src/orchestrator.py`, verify `.env`, and review the ingestion process output. |
+| dbt fails to connect or run | Missing/invalid `MOTHERDUCK_TOKEN` or profile configuration issue. | Run `dbt debug --project-dir src/transformations --profiles-dir src/transformations`, then check the token and `profiles.yml`. |
+| Duplicate Bronze rows | Expected SQS retry behavior following an interrupted ingest/delete sequence. | Run dbt; `silver_telemetry` retains the latest processed copy for each `event_id`. |
 
 ## Pipeline verification
 
