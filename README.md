@@ -16,6 +16,7 @@
   <a href="#architecture">Architecture</a> &middot;
   <a href="#setup-and-deployment">Setup</a> &middot;
   <a href="#operating-the-pipeline">Operations</a> &middot;
+  <a href="docs/sample-data.md">Sample data</a> &middot;
   <a href="#pipeline-verification">Verification</a>
 </p>
 
@@ -277,6 +278,8 @@ Tune the limits in `src/etl/thresholds.json` without changing the detector code.
 | Bronze | `bronze_telemetry` | Ingested enriched events with minimal transformation. |
 | Silver | `silver_telemetry` | Deduplicated events with normalized statuses and typed timestamps. |
 | Gold | `gold_hourly_machine_stats` | Hourly device and machine operational aggregates. |
+
+See [Sample data](docs/sample-data.md) for representative records at each Bronze, Silver, and Gold layer.
 
 ## Reliability and security
 
