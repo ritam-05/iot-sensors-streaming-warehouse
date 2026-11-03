@@ -55,28 +55,6 @@ flowchart TD
     BRONZE --> SILVER[dbt Silver<br/>clean and deduplicate]
     SILVER --> GOLD[dbt Gold<br/>hourly machine metrics]
 ```
-
-```text
-EventBridge schedule (every minute)
-            |
-            v
-Simulator Lambda --> Telemetry SQS Queue --> Telemetry DLQ
-                            |
-                            v
-                       ETL Lambda
-                       |--> DynamoDB: latest device state
-                       `--> Warehouse SQS Queue --> Warehouse DLQ
-                                             |
-                                             v
-                           Local ingestion job / orchestrator
-                                             |
-                                             v
-                              MotherDuck Bronze table
-                                             |
-                                             v
-                                dbt Silver and Gold models
-```
-
 The AWS SAM stack provisions both queues and their dead-letter queues, the DynamoDB state table, an SQS-triggered ETL Lambda, and an EventBridge-scheduled simulator Lambda. The warehouse ingestion and dbt steps are run locally through the included Python orchestrator.
 
 ## Pipeline workflow
