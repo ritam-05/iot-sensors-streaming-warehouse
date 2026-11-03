@@ -1,0 +1,8 @@
+transformations:
+  outputs:
+    dev:
+      type: duckdb
+      path: md:iotstream_db
+      extensions:
+        - httpfs
+  target: dev

@@ -22,10 +22,14 @@ htmlcov/
 *.pem
 *.key
 
-# dbt build artifacts
-warehouse/target/
-warehouse/dbt_packages/
-warehouse/logs/
+# AWS SAM build artifacts
+.aws-sam/
+
+# dbt build artifacts and local DuckDB databases
+src/transformations/target/
+src/transformations/dbt_packages/
+src/transformations/logs/
+src/transformations/*.duckdb
 
 # Infrastructure state and local overrides
 *.tfstate
